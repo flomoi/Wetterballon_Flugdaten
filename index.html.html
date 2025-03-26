@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wetterballon Flugdaten</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.3.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        h1 { margin: 20px 0; }
+        #info-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 15px; background: #f8f8f8; padding: 10px; }
+        .info-item { font-weight: bold; margin: 5px; }
+        #map { width: 100%; height: 600px; max-width: 1000px; margin: auto; }
+        #charts { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; padding: 10px; }
+        .chart-container { width: 100%; max-width: 500px; height: 300px; margin: 0 auto; }
+        canvas { width: 100% !important; height: 100% !important; }
+        @media screen and (max-width: 768px) {
+            .chart-container { max-width: 90%; height: 200px; }
+            #map { height: 400px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Wetterballon Flugdaten</h1>
+    <div id="info-container">
+        <div class="info-item">Letzte Aktualisierung: <span id="last-time">-</span></div>
+        <div class="info-item">Breitengrad: <span id="last-lat">-</span></div>
+        <div class="info-item">Längengrad: <span id="last-lon">-</span></div>
+        <div class="info-item">Höhe: <span id="last-altitude">-</span> m</div>
+        <div class="info-item">Geschwindigkeit: <span id="last-speed">-</span> km/h</div>
+        <div class="info-item">Temperatur: <span id="last-temp">-</span> °C</div>
+    </div>
+    <div id="map"></div>
+    <div id="charts">
+        <div class="chart-container"><canvas id="altitudeChart"></canvas></div>
+        <div class="chart-container"><canvas id="speedChart"></canvas></div>
+        <div class="chart-container"><canvas id="tempChart"></canvas></div>
+    </div>
+    <script>
+        const channelID = 2802755;
+        const readAPIKey = 'N414IY7M9NJ2REWH';
+        const map = L.map('map').setView([47.0, 14.7], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+        let polyline = L.polyline([], { color: 'red' }).addTo(map);
+        let markers = [];
+        let lastMarker = null;
+        let altitudeChart, speedChart, tempChart;
+
+        async function fetchData() {
+            const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?results=500&api_key=${readAPIKey}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            const feeds = data.feeds;
+            if (feeds.length === 0) return;
+
+            let latLngs = [];
+            let altitudeData = [], speedData = [], tempData = [];
+            let lastValidData = feeds[feeds.length - 1];
+
+            document.getElementById("last-time").innerText = new Date(lastValidData.created_at).toLocaleString();
+            document.getElementById("last-lat").innerText = lastValidData.field1 !== "x" ? lastValidData.field1 : "-";
+            document.getElementById("last-lon").innerText = lastValidData.field2 !== "x" ? lastValidData.field2 : "-";
+            document.getElementById("last-altitude").innerText = lastValidData.field3 !== "x" ? lastValidData.field3 : "-";
+            document.getElementById("last-speed").innerText = lastValidData.field4 !== "x" ? lastValidData.field4 : "-";
+            document.getElementById("last-temp").innerText = lastValidData.field7 !== "x" ? lastValidData.field7 : "-";
+
+            feeds.forEach(feed => {
+                let time = new Date(feed.created_at);
+                let lat = feed.field1 !== "x" ? parseFloat(feed.field1) : null;
+                let lon = feed.field2 !== "x" ? parseFloat(feed.field2) : null;
+                if (lat !== null && lon !== null) {
+                    latLngs.push([lat, lon]);
+                    let marker = L.circleMarker([lat, lon], { radius: 5, color: 'red', fillOpacity: 1 }).addTo(map);
+                    marker.bindPopup(`Zeit: ${time.toLocaleString()}<br>Breite: ${lat}<br>Länge: ${lon}<br>Höhe: ${feed.field3 ?? "-"} m<br>Geschwindigkeit: ${feed.field4 ?? "-"} km/h<br>Temperatur: ${feed.field7 ?? "-"} °C`).openPopup();
+                    markers.push(marker);
+                }
+                if (feed.field3 !== "x") altitudeData.push({ x: time, y: parseFloat(feed.field3) });
+                if (feed.field4 !== "x") speedData.push({ x: time, y: parseFloat(feed.field4) });
+                if (feed.field7 !== "x") tempData.push({ x: time, y: parseFloat(feed.field7) });
+            });
+
+            polyline.setLatLngs(latLngs);
+
+            altitudeChart = new Chart(document.getElementById("altitudeChart"), {
+                type: "line",
+                data: { datasets: [{ label: "Höhe (m)", data: altitudeData }] },
+                options: {
+                    responsive: true,
+                    onClick: function(e) {
+                        const activePoints = altitudeChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
+                        if (activePoints.length > 0) {
+                            const firstPoint = activePoints[0];
+                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
+                            altitudeChart.tooltip.setActiveElements(activePoints);
+                            altitudeChart.update();
+                        }
+                    },
+                    tooltips: {
+                        enabled: false,  // Tooltips werden durch den Klick aktiviert
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute' }
+                        }
+                    }
+                }
+            });
+
+            speedChart = new Chart(document.getElementById("speedChart"), {
+                type: "line",
+                data: { datasets: [{ label: "Geschwindigkeit (km/h)", data: speedData }] },
+                options: {
+                    responsive: true,
+                    onClick: function(e) {
+                        const activePoints = speedChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
+                        if (activePoints.length > 0) {
+                            const firstPoint = activePoints[0];
+                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
+                            speedChart.tooltip.setActiveElements(activePoints);
+                            speedChart.update();
+                        }
+                    },
+                    tooltips: {
+                        enabled: false,  // Tooltips werden durch den Klick aktiviert
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute' }
+                        }
+                    }
+                }
+            });
+
+            tempChart = new Chart(document.getElementById("tempChart"), {
+                type: "line",
+                data: { datasets: [{ label: "Temperatur (°C)", data: tempData }] },
+                options: {
+                    responsive: true,
+                    onClick: function(e) {
+                        const activePoints = tempChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
+                        if (activePoints.length > 0) {
+                            const firstPoint = activePoints[0];
+                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
+                            tempChart.tooltip.setActiveElements(activePoints);
+                            tempChart.update();
+                        }
+                    },
+                    tooltips: {
+                        enabled: false,  // Tooltips werden durch den Klick aktiviert
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute' }
+                        }
+                    }
+                }
+            });
+        }
+
+        fetchData();
+        setInterval(fetchData, 60000);
+    </script>
+</body>
+</html>
