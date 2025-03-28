@@ -33,12 +33,14 @@
         <div class="info-item">Höhe: <span id="last-altitude">-</span> m</div>
         <div class="info-item">Geschwindigkeit: <span id="last-speed">-</span> km/h</div>
         <div class="info-item">Temperatur: <span id="last-temp">-</span> °C</div>
+        <div class="info-item">Steiggeschwindigkeit: <span id="last-ascend">-</span> m/s</div>
     </div>
     <div id="map"></div>
     <div id="charts">
         <div class="chart-container"><canvas id="altitudeChart"></canvas></div>
         <div class="chart-container"><canvas id="speedChart"></canvas></div>
         <div class="chart-container"><canvas id="tempChart"></canvas></div>
+        <div class="chart-container"><canvas id="ascendChart"></canvas></div>
     </div>
     <script>
         const channelID = 2802755;
@@ -48,7 +50,7 @@
         let polyline = L.polyline([], { color: 'red' }).addTo(map);
         let markers = [];
         let lastMarker = null;
-        let altitudeChart, speedChart, tempChart;
+        let altitudeChart, speedChart, tempChart, ascendChart;
 
         async function fetchData() {
             const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?results=500&api_key=${readAPIKey}`;
@@ -58,7 +60,7 @@
             if (feeds.length === 0) return;
 
             let latLngs = [];
-            let altitudeData = [], speedData = [], tempData = [];
+            let altitudeData = [], speedData = [], tempData = [], ascendData = [];
             let lastValidData = feeds[feeds.length - 1];
 
             document.getElementById("last-time").innerText = new Date(lastValidData.created_at).toLocaleString();
@@ -67,6 +69,7 @@
             document.getElementById("last-altitude").innerText = lastValidData.field3 !== "x" ? lastValidData.field3 : "-";
             document.getElementById("last-speed").innerText = lastValidData.field4 !== "x" ? lastValidData.field4 : "-";
             document.getElementById("last-temp").innerText = lastValidData.field7 !== "x" ? lastValidData.field7 : "-";
+            document.getElementById("last-ascend").innerText = lastValidData.field8 !== "x" ? lastValidData.field8 : "-";
 
             feeds.forEach(feed => {
                 let time = new Date(feed.created_at);
@@ -75,35 +78,40 @@
                 if (lat !== null && lon !== null) {
                     latLngs.push([lat, lon]);
                     let marker = L.circleMarker([lat, lon], { radius: 5, color: 'red', fillOpacity: 1 }).addTo(map);
-                    marker.bindPopup(`Zeit: ${time.toLocaleString()}<br>Breite: ${lat}<br>Länge: ${lon}<br>Höhe: ${feed.field3 ?? "-"} m<br>Geschwindigkeit: ${feed.field4 ?? "-"} km/h<br>Temperatur: ${feed.field7 ?? "-"} °C`).openPopup();
+                    marker.bindPopup(`Zeit: ${time.toLocaleString()}<br>Breite: ${lat}<br>Länge: ${lon}<br>Höhe: ${feed.field3 ?? "-"} m<br>Geschwindigkeit: ${feed.field4 ?? "-"} km/h<br>Temperatur: ${feed.field7 ?? "-"} °C<br>Steiggeschwindigkeit: ${feed.field8 ?? "-"} m/s`).openPopup();
                     markers.push(marker);
                 }
                 if (feed.field3 !== "x") altitudeData.push({ x: time, y: parseFloat(feed.field3) });
                 if (feed.field4 !== "x") speedData.push({ x: time, y: parseFloat(feed.field4) });
                 if (feed.field7 !== "x") tempData.push({ x: time, y: parseFloat(feed.field7) });
+                if (feed.field8 !== "x") ascendData.push({ x: time, y: parseFloat(feed.field8) });
             });
 
             polyline.setLatLngs(latLngs);
 
+            // Altitude Chart
+            altitudeChart.data.datasets[0].data = altitudeData;
+            altitudeChart.update();
+
+            // Speed Chart
+            speedChart.data.datasets[0].data = speedData;
+            speedChart.update();
+
+            // Temperature Chart
+            tempChart.data.datasets[0].data = tempData;
+            tempChart.update();
+
+            // Ascend Speed Chart
+            ascendChart.data.datasets[0].data = ascendData;
+            ascendChart.update();
+        }
+
+        function initializeCharts() {
             altitudeChart = new Chart(document.getElementById("altitudeChart"), {
                 type: "line",
-                data: { datasets: [{ label: "Höhe (m)", data: altitudeData }] },
+                data: { datasets: [{ label: "Höhe (m)", data: [] }] },
                 options: {
                     responsive: true,
-                    onClick: function(e) {
-                        const activePoints = altitudeChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
-                        if (activePoints.length > 0) {
-                            const firstPoint = activePoints[0];
-                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
-                            altitudeChart.tooltip.setActiveElements(activePoints);
-                            altitudeChart.update();
-                        }
-                    },
-                    tooltips: {
-                        enabled: false,  // Tooltips werden durch den Klick aktiviert
-                        mode: 'index',
-                        intersect: false,
-                    },
                     scales: {
                         x: {
                             type: 'time',
@@ -115,23 +123,9 @@
 
             speedChart = new Chart(document.getElementById("speedChart"), {
                 type: "line",
-                data: { datasets: [{ label: "Geschwindigkeit (km/h)", data: speedData }] },
+                data: { datasets: [{ label: "Geschwindigkeit (km/h)", data: [] }] },
                 options: {
                     responsive: true,
-                    onClick: function(e) {
-                        const activePoints = speedChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
-                        if (activePoints.length > 0) {
-                            const firstPoint = activePoints[0];
-                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
-                            speedChart.tooltip.setActiveElements(activePoints);
-                            speedChart.update();
-                        }
-                    },
-                    tooltips: {
-                        enabled: false,  // Tooltips werden durch den Klick aktiviert
-                        mode: 'index',
-                        intersect: false,
-                    },
                     scales: {
                         x: {
                             type: 'time',
@@ -143,23 +137,23 @@
 
             tempChart = new Chart(document.getElementById("tempChart"), {
                 type: "line",
-                data: { datasets: [{ label: "Temperatur (°C)", data: tempData }] },
+                data: { datasets: [{ label: "Temperatur (°C)", data: [] }] },
                 options: {
                     responsive: true,
-                    onClick: function(e) {
-                        const activePoints = tempChart.getElementsAtEventForMode(e, 'nearest', { intersect: true }, false);
-                        if (activePoints.length > 0) {
-                            const firstPoint = activePoints[0];
-                            const value = firstPoint._chart.data.datasets[firstPoint.datasetIndex].data[firstPoint.index];
-                            tempChart.tooltip.setActiveElements(activePoints);
-                            tempChart.update();
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'minute' }
                         }
-                    },
-                    tooltips: {
-                        enabled: false,  // Tooltips werden durch den Klick aktiviert
-                        mode: 'index',
-                        intersect: false,
-                    },
+                    }
+                }
+            });
+
+            ascendChart = new Chart(document.getElementById("ascendChart"), {
+                type: "line",
+                data: { datasets: [{ label: "Steiggeschwindigkeit (m/s)", data: [] }] },
+                options: {
+                    responsive: true,
                     scales: {
                         x: {
                             type: 'time',
@@ -170,6 +164,9 @@
             });
         }
 
+        // Initial Charts Setup
+        initializeCharts();
+        // Fetch Data and Update every minute
         fetchData();
         setInterval(fetchData, 60000);
     </script>
