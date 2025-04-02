@@ -32,27 +32,51 @@
         <div class="info-item">Längengrad: <span id="last-lon">-</span></div>
         <div class="info-item">Höhe: <span id="last-altitude">-</span> m</div>
         <div class="info-item">Geschwindigkeit: <span id="last-speed">-</span> km/h</div>
-        <div class="info-item">Temperatur: <span id="last-temp">-</span> °C</div>
         <div class="info-item">Steiggeschwindigkeit: <span id="last-ascend">-</span> m/s</div>
+        <div class="info-item">Temperatur: <span id="last-temp">-</span> °C</div>
     </div>
     <div id="map"></div>
     <div id="charts">
         <div class="chart-container"><canvas id="altitudeChart"></canvas></div>
         <div class="chart-container"><canvas id="speedChart"></canvas></div>
-        <div class="chart-container"><canvas id="tempChart"></canvas></div>
         <div class="chart-container"><canvas id="ascendChart"></canvas></div>
+        <div class="chart-container"><canvas id="tempChart"></canvas></div>
     </div>
+
     <script>
         const channelID = 2802755;
         const readAPIKey = 'N414IY7M9NJ2REWH';
-        const map = L.map('map').setView([47.0, 14.7], 6);
+        const map = L.map('map').setView([47.0845290, 14.6811683], 10);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
         let polyline = L.polyline([], { color: 'red' }).addTo(map);
         let markers = [];
-        let lastMarker = null;
-        let altitudeChart, speedChart, tempChart, ascendChart;
+	let altitudeChart, speedChart, tempChart, ascendChart;
+        let mapAdjusted = false;
+
+        // Diagrammdatenbank (Speichern von Werten alle 60 Sekunden)
+        let chartDataBase = {
+            altitude: [],
+            speed: [],
+            temp: [],
+            ascend: []
+        };
+
+        function adjustMapBounds() {
+            if (polyline.getLatLngs().length > 0) {
+                map.fitBounds(polyline.getBounds());
+            }
+        }
 
         async function fetchData() {
+
+	    //Diagramm-Datenbank leeren um doppelte Einträge zu vermeiden
+	    chartDataBase = {
+                altitude: [],
+        	speed: [],
+        	temp: [],
+        	ascend: []
+    	    };
+
             const url = `https://api.thingspeak.com/channels/${channelID}/feeds.json?results=500&api_key=${readAPIKey}`;
             const response = await fetch(url);
             const data = await response.json();
@@ -60,9 +84,9 @@
             if (feeds.length === 0) return;
 
             let latLngs = [];
-            let altitudeData = [], speedData = [], tempData = [], ascendData = [];
             let lastValidData = feeds[feeds.length - 1];
 
+            // Update der neuesten Werte für die Anzeige in der ersten Zeile
             document.getElementById("last-time").innerText = new Date(lastValidData.created_at).toLocaleString();
             document.getElementById("last-lat").innerText = lastValidData.field1 !== "x" ? lastValidData.field1 : "-";
             document.getElementById("last-lon").innerText = lastValidData.field2 !== "x" ? lastValidData.field2 : "-";
@@ -71,104 +95,133 @@
             document.getElementById("last-temp").innerText = lastValidData.field7 !== "x" ? lastValidData.field7 : "-";
             document.getElementById("last-ascend").innerText = lastValidData.field8 !== "x" ? lastValidData.field8 : "-";
 
+            // Markers und Polyline für die Karte aktualisieren
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+
             feeds.forEach(feed => {
                 let time = new Date(feed.created_at);
                 let lat = feed.field1 !== "x" ? parseFloat(feed.field1) : null;
                 let lon = feed.field2 !== "x" ? parseFloat(feed.field2) : null;
                 if (lat !== null && lon !== null) {
                     latLngs.push([lat, lon]);
-                    let marker = L.circleMarker([lat, lon], { radius: 5, color: 'red', fillOpacity: 1 }).addTo(map);
-                    marker.bindPopup(`Zeit: ${time.toLocaleString()}<br>Breite: ${lat}<br>Länge: ${lon}<br>Höhe: ${feed.field3 ?? "-"} m<br>Geschwindigkeit: ${feed.field4 ?? "-"} km/h<br>Temperatur: ${feed.field7 ?? "-"} °C<br>Steiggeschwindigkeit: ${feed.field8 ?? "-"} m/s`).openPopup();
+                    let marker = L.circleMarker([lat, lon], { radius: 3, color: 'red', fillOpacity: 1 }).addTo(map);
+                    marker.bindPopup(`Zeit: ${time.toLocaleString()}<br>Breite: ${lat}<br>Länge: ${lon}<br>Höhe: ${feed.field3 ?? "-"} m<br>Geschwindigkeit: ${feed.field4 ?? "-"} km/h<br>Steiggeschw.: ${feed.field8 ?? "-"} m/s<br>Temperatur: ${feed.field7 ?? "-"} °C`).openPopup();
                     markers.push(marker);
                 }
-                if (feed.field3 !== "x") altitudeData.push({ x: time, y: parseFloat(feed.field3) });
-                if (feed.field4 !== "x") speedData.push({ x: time, y: parseFloat(feed.field4) });
-                if (feed.field7 !== "x") tempData.push({ x: time, y: parseFloat(feed.field7) });
-                if (feed.field8 !== "x") ascendData.push({ x: time, y: parseFloat(feed.field8) });
+
+                // Diagrammdatenbank aktualisieren (alle 60 Sekunden)
+                updateChartDataBase(time, feed);
             });
 
             polyline.setLatLngs(latLngs);
 
-            // Altitude Chart
-            altitudeChart.data.datasets[0].data = altitudeData;
-            altitudeChart.update();
-
-            // Speed Chart
-            speedChart.data.datasets[0].data = speedData;
-            speedChart.update();
-
-            // Temperature Chart
-            tempChart.data.datasets[0].data = tempData;
-            tempChart.update();
-
-            // Ascend Speed Chart
-            ascendChart.data.datasets[0].data = ascendData;
-            ascendChart.update();
+            if (!mapAdjusted) {
+                adjustMapBounds();
+                mapAdjusted = true;
+            }
+            updateCharts();
         }
 
+	function updateChartDataBase(time, feed) {
+	    time = new Date(time); // Sicherstellen, dass `time` ein Date-Objekt ist
+	    const lastIndex = chartDataBase.altitude.length - 1;
+    
+	    if (lastIndex >= 0) {
+	        let lastTime = chartDataBase.altitude[lastIndex].time;
+	        let timeDiff = (time - lastTime) / 1000 / 60; // Zeitdifferenz in Minuten
+
+	        // Wenn die Lücke größer als 2 Minuten ist, fügen wir einen 0-Wert als Platzhalter ein
+	        while (timeDiff > 2) {
+		    lastTime = new Date(lastTime.getTime() + 120000); // Erhöhe um 2 Minuten
+	            chartDataBase.altitude.push({ time: lastTime, value: NaN });
+	            chartDataBase.speed.push({ time: lastTime, value: NaN });
+	            chartDataBase.temp.push({ time: lastTime, value: NaN });
+	            chartDataBase.ascend.push({ time: lastTime, value: NaN});
+
+		    timeDiff -= 2;
+	        }
+	    }
+
+	    // Normale Werte speichern (falls kein "x" vorhanden ist)
+	    chartDataBase.altitude.push({ time: time, value: feed.field3 !== "x" ? parseFloat(feed.field3) : NaN });
+	    chartDataBase.speed.push({ time: time, value: feed.field4 !== "x" ? parseFloat(feed.field4) : NaN });
+	    chartDataBase.temp.push({ time: time, value: feed.field7 !== "x" ? parseFloat(feed.field7) : NaN });
+	    chartDataBase.ascend.push({ time: time, value: feed.field8 !== "x" ? parseFloat(feed.field8) : NaN});
+	}
+
         function initializeCharts() {
+            const chartOptions = {
+                responsive: true,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'minute',
+                            unitStepSize: 1,
+                        },
+                        ticks: {
+                            autoSkip: true,
+                            maxRotation: 80,
+                            minRotation: 0,
+                            major: {
+                                fontStyle: 'bold'
+                            }
+                        },
+                        grid: {
+                            display: false,
+                        },
+                    },
+                    y: {
+                        beginAtZero: true
+                    },
+                },
+                categoryPercentage: 1,
+                barPercentage: 1,
+		barThickness: 'flex',
+            };
+
             altitudeChart = new Chart(document.getElementById("altitudeChart"), {
-                type: "line",
-                data: { datasets: [{ label: "Höhe (m)", data: [] }] },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'minute' }
-                        }
-                    }
-                }
+                type: "bar",
+                data: { datasets: [{ label: "Höhe (m)", data: [], backgroundColor: "rgba(54, 162, 235)" }] },
+                options: chartOptions
             });
 
             speedChart = new Chart(document.getElementById("speedChart"), {
-                type: "line",
-                data: { datasets: [{ label: "Geschwindigkeit (km/h)", data: [] }] },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'minute' }
-                        }
-                    }
-                }
+                type: "bar",
+                data: { datasets: [{ label: "Geschwindigkeit (km/h)", data: [], backgroundColor: "rgba(54, 162, 235)" }] },
+                options: chartOptions
             });
 
             tempChart = new Chart(document.getElementById("tempChart"), {
-                type: "line",
-                data: { datasets: [{ label: "Temperatur (°C)", data: [] }] },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'minute' }
-                        }
-                    }
-                }
+                type: "bar",
+                data: { datasets: [{ label: "Temperatur (°C)", data: [], backgroundColor: "rgba(54, 162, 235)" }] },
+                options: chartOptions
             });
 
             ascendChart = new Chart(document.getElementById("ascendChart"), {
-                type: "line",
-                data: { datasets: [{ label: "Steiggeschwindigkeit (m/s)", data: [] }] },
-                options: {
-                    responsive: true,
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'minute' }
-                        }
-                    }
-                }
+                type: "bar",
+                data: { datasets: [{ label: "Steiggeschwindigkeit (m/s)", data: [], backgroundColor: "rgba(54, 162, 235)" }] },
+                options: chartOptions
             });
         }
 
-        // Initial Charts Setup
-        initializeCharts();
-        // Fetch Data and Update every minute
-        fetchData();
+        function updateCharts() {
+            altitudeChart.data.datasets[0].data = chartDataBase.altitude.map(entry => ({ x: entry.time, y: entry.value }));
+            speedChart.data.datasets[0].data = chartDataBase.speed.map(entry => ({ x: entry.time, y: entry.value }));
+            tempChart.data.datasets[0].data = chartDataBase.temp.map(entry => ({ x: entry.time, y: entry.value }));
+            ascendChart.data.datasets[0].data = chartDataBase.ascend.map(entry => ({ x: entry.time, y: entry.value }));
+
+            altitudeChart.update();
+            speedChart.update();
+            tempChart.update();
+            ascendChart.update();
+        }
+
+        // Daten abrufen und regelmäßig aktualisieren
         setInterval(fetchData, 60000);
+        fetchData();
+	initializeCharts();
     </script>
 </body>
 </html>
