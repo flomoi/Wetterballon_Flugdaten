@@ -41,7 +41,7 @@
     <div id="map"></div>
     <div id="image-wrapper">
         <h2>Letztes Bild</h2>
-        <img id="ballon-image" src="https://www.dropbox.com/scl/fi/9hypuhwfsod0f31qvro1i/letztes_bild?rlkey=g1raslziip7eu587hnz96dvig&st=fx4c4ynf&raw=1" alt="Letztes Bild vom Wetterballon">
+        <img id="ballon-image" src="https://www.dropbox.com/scl/fi/9hypuhwfsod0f31qvro1i/letztes_bild?rlkey=g1raslziip7eu587hnz96dvig&raw=1" alt="Letztes Bild vom Wetterballon">
     </div>
     <div id="charts">
         <div class="chart-container"><canvas id="altitudeChart"></canvas></div>
@@ -229,6 +229,14 @@
         setInterval(fetchData, 60000);
         fetchData();
 	initializeCharts();
+// Bild alle 60 Sekunden neu laden (inkl. Cache-Busting)
+        setInterval(() => {
+            const img = document.getElementById("ballon-image");
+            if (img) {
+                const baseUrl = "https://www.dropbox.com/scl/fi/9hypuhwfsod0f31qvro1i/letztes_bild?rlkey=g1raslziip7eu587hnz96dvig&raw=1";
+                img.src = `${baseUrl}&t=${new Date().getTime()}`;
+            }
+        }, 60000); // alle 60 Sekunden
     </script>
 </body>
 </html>
